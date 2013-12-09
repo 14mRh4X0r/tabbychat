@@ -4,9 +4,11 @@ buildscript {
             name 'Gradle Shadow'
             url 'http://dl.bintray.com/content/johnrengelman/gradle-plugins'
         }
+        mavenCentral()
     }
     dependencies {
         classpath 'org.gradle.plugins:shadow:0.7.4'
+        classpath 'net.sourceforge.argo:argo:3.7'
     }
 }
 
@@ -57,6 +59,7 @@ def runMCPTask(String name) {
   }
 
   cmd << '--client'
+  cmd << '--nocopy'
 
   Process proc = new ProcessBuilder(cmd).directory(mcpDir).start()
   proc.consumeProcessOutput(System.out, System.err)
@@ -69,13 +72,75 @@ task downloadMCP(type: Download) {
   dest = new File(buildDir, 'mcp.zip')
 }
 
-task setupMCP(dependsOn: downloadMCP) <<{
+import argo.jdom.JdomParser
+
+task downloadAssets {
+  def jars = buildDir.absolutePath + '/mcp/jars'
+  outputs.dir(jars + '/libraries')
+  outputs.dir(jars + '/versions/1.6.4')
+
+  doLast {
+    def home = Os.isFamily(Os.FAMILY_WINDOWS) ? System.env['APPDATA'] : System.env['HOME']
+    File mcDir = new File(home, Os.isFamily(Os.FAMILY_MAC) ? 'Library/Application Support/minecraft' : '.minecraft')
+
+    if (mcDir.isDirectory()) {
+      File version = new File(mcDir, 'versions/1.6.4')
+      File libraries = new File(mcDir, 'libraries')
+      if (version.exists() && libraries.exists()) {
+        copy {
+          from version
+          into jars + '/versions/1.6.4'
+        }
+        copy {
+          from libraries
+          into jars + '/libraries'
+        }
+        fileTree(dir: libraries).include('**/*-natives-*.jar').each {
+          ant.unzip src: it, dest: jars + '/versions/1.6.4/1.6.4-natives'
+        }
+        return
+      }
+    }
+
+    File versionDir = new File(buildDir, 'mcp/jars/versions/1.6.4')
+    versionDir.mkdirs()
+    ant.get(src: 'http://s3.amazonaws.com/Minecraft.Download/versions/1.6.4/1.6.4.json',
+            dest: new File(versionDir, '1.6.4.json'))
+    ant.get(src: 'http://s3.amazonaws.com/Minecraft.Download/versions/1.6.4/1.6.4.jar',
+            dest: new File(versionDir, '1.6.4.jar'))
+
+    def rootNode = new JdomParser().parse(new java.io.File(versionDir, '1.6.4.json').newReader())
+    rootNode.getArrayNode('libraries').each { node ->
+      if (node.isArrayNode("rules")) { // Weird os-specific dependencies. We're only compiling anyway.
+        def noRet = false
+        node.getArrayNode("rules").each { rule ->
+          if (rule.getStringValue("action").equals("allow") && !rule.isNode("os")) noRet = true
+        }
+        if (!noRet) return
+      }
+
+      def (group, artifact, version) = node.getStringValue('name').split(':')
+      group = group.replace('.', '/')
+      def classifier = node.isNode("natives") ? "-natives-windows" : ""
+      def path = "${group}/${artifact}/${version}/${artifact}-${version}${classifier}.jar"
+      def dest = new File(buildDir, "mcp/jars/libraries/${path}")
+      dest.parentFile.mkdirs()
+      def nativesDir = new File(versionDir, '1.6.4-natives')
+      nativesDir.mkdirs()
+      ant.get(src: "https://libraries.minecraft.net/${path}", dest: dest)
+
+      if (node.isNode("natives")) {
+        ant.unzip(src: dest, dest: nativesDir)
+      }
+    }
+  }
+}
+
+task setupMCP(dependsOn: [downloadMCP, downloadAssets]) <<{
   def mcpDir = new File(buildDir, 'mcp')
   ant.unzip src: downloadMCP.outputs.files.files.iterator().next(), dest: mcpDir
 
-  if (runMCPTask('decompile') > 0) {
-    error 'decompiling'
-  }
+  runMCPTask('decompile')
 
   def binDir = files(new File(mcpDir, 'bin/minecraft'), fileTree(dir: new File(mcpDir, 'jars/libraries')))
 
