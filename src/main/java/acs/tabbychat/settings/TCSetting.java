@@ -9,7 +9,7 @@ import net.minecraft.src.Minecraft;
 import net.minecraft.src.FontRenderer;
 import net.minecraft.src.GuiButton;
 
-abstract class TCSetting extends GuiButton implements ITCSetting {
+public abstract class TCSetting extends GuiButton implements ITCSetting {
 	public int buttonColor = 0xbba5e7e4;
 	private int buttonOffColor = 0x99000000;
 	protected int labelX;
