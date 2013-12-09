@@ -62,6 +62,8 @@ def runMCPTask(String name) {
   cmd << '--client'
   cmd << '--nocopy'
 
+  println() // Nice newline for Jenkins
+
   Process proc = new ProcessBuilder(cmd).directory(mcpDir).start()
   proc.consumeProcessOutput(System.out, System.err)
 
