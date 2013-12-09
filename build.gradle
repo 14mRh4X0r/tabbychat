@@ -41,6 +41,8 @@ eclipse {
 import org.apache.tools.ant.taskdefs.condition.Os
 import java.io.File
 
+ext.mcpDir = new File(buildDir, 'mcp')
+
 class Download extends DefaultTask {
   @Input String src
   @OutputFile File dest
@@ -50,7 +52,6 @@ class Download extends DefaultTask {
 }
 
 def runMCPTask(String name) {
-  def mcpDir = new File(buildDir, 'mcp')
   def cmd
   if (Os.isFamily(Os.FAMILY_WINDOWS)) {
     cmd = ["cmd", "/c", name + ".bat"]
@@ -67,43 +68,42 @@ def runMCPTask(String name) {
   return proc.waitFor()
 }
 
-task downloadMCP(type: Download) {
+task getMCP(type: Download) {
   src = 'http://mcp.ocean-labs.de/files/archive/mcp811.zip'
   dest = new File(buildDir, 'mcp.zip')
+
+  doLast {
+    def mcpDir = new File(buildDir, 'mcp')
+    ant.unzip src: outputs.files.files.iterator().next(), dest: mcpDir
+  }
 }
 
+// Assets {{{2
 import argo.jdom.JdomParser
 
-task downloadAssets {
-  def jars = buildDir.absolutePath + '/mcp/jars'
+task getAssets {
+  def jars = mcpDir.absolutePath + '/jars'
   outputs.dir(jars + '/libraries')
   outputs.dir(jars + '/versions/1.6.4')
 
   doLast {
+    def os = Os.isFamily(Os.FAMILY_WINDOWS) ? "windows" : Os.isFamily(Os.FAMILY_MAC) ? "osx" : "linux"
     def home = Os.isFamily(Os.FAMILY_WINDOWS) ? System.env['APPDATA'] : System.env['HOME']
     File mcDir = new File(home, Os.isFamily(Os.FAMILY_MAC) ? 'Library/Application Support/minecraft' : '.minecraft')
 
+    def copyLocally = false
+    File librariesDir
     if (mcDir.isDirectory()) {
-      File version = new File(mcDir, 'versions/1.6.4')
-      File libraries = new File(mcDir, 'libraries')
-      if (version.exists() && libraries.exists()) {
-        copy {
-          from version
-          into jars + '/versions/1.6.4'
-        }
-        copy {
-          from libraries
-          into jars + '/libraries'
-        }
-        fileTree(dir: libraries).include('**/*-natives-*.jar').each {
-          ant.unzip src: it, dest: jars + '/versions/1.6.4/1.6.4-natives'
-        }
-        return
+      File versionDir = new File(mcDir, 'versions/1.6.4')
+      librariesDir = new File(mcDir, 'libraries')
+      if (versionDir.exists() && librariesDir.exists()) {
+        copyLocally = true
       }
     }
 
-    File versionDir = new File(buildDir, 'mcp/jars/versions/1.6.4')
+    File versionDir = new File(jars, 'versions/1.6.4')
     versionDir.mkdirs()
+
     ant.get(src: 'http://s3.amazonaws.com/Minecraft.Download/versions/1.6.4/1.6.4.json',
             dest: new File(versionDir, '1.6.4.json'))
     ant.get(src: 'http://s3.amazonaws.com/Minecraft.Download/versions/1.6.4/1.6.4.jar',
@@ -121,25 +121,23 @@ task downloadAssets {
 
       def (group, artifact, version) = node.getStringValue('name').split(':')
       group = group.replace('.', '/')
-      def classifier = node.isNode("natives") ? "-natives-windows" : ""
+      def classifier = node.isNode("natives") ? "-natives-${os}" : ""
       def path = "${group}/${artifact}/${version}/${artifact}-${version}${classifier}.jar"
       def dest = new File(buildDir, "mcp/jars/libraries/${path}")
       dest.parentFile.mkdirs()
       def nativesDir = new File(versionDir, '1.6.4-natives')
       nativesDir.mkdirs()
-      ant.get(src: "https://libraries.minecraft.net/${path}", dest: dest)
+      def src = copyLocally ? new File(librariesDir, path).toURI() : "https://libraries.minecraft.net/${path}"
+      ant.get(src: src, dest: dest)
 
       if (node.isNode("natives")) {
         ant.unzip(src: dest, dest: nativesDir)
       }
     }
   }
-}
+} // }}}2
 
-task setupMCP(dependsOn: [downloadMCP, downloadAssets]) <<{
-  def mcpDir = new File(buildDir, 'mcp')
-  ant.unzip src: downloadMCP.outputs.files.files.iterator().next(), dest: mcpDir
-
+task setupMCP(dependsOn: [getMCP, getAssets]) <<{
   runMCPTask('decompile')
 
   def binDir = files(new File(mcpDir, 'bin/minecraft'), fileTree(dir: new File(mcpDir, 'jars/libraries')))
@@ -155,7 +153,7 @@ File deobFile(File obbed) {
   javaexec {
     classpath = files(new File(buildDir, 'BON.jar'))
     main = 'immibis.bon.cui.MCPRemap'
-    args = ['-mcp', new File(buildDir, 'mcp').absolutePath,
+    args = ['-mcp', mcpDir.absolutePath,
             '-from', 'OBF',
             '-to', 'MCP',
             '-side', 'CLIENT',
@@ -207,11 +205,11 @@ shadow {
 task reobf(dependsOn: [tasks.shadow, downloadBON, setupMCP], type: JavaExec) {
   main = 'immibis.bon.cui.MCPRemap'
   classpath = files(new File(buildDir, 'BON.jar'))
-  args = ['-mcp', new File(buildDir, 'mcp').absolutePath,
+  args = ['-mcp', mcpDir.absolutePath,
           '-from', 'MCP',
           '-to', 'OBF',
           '-side', 'CLIENT',
-          '-ref', new File(buildDir, 'mcp/bin/minecraft').absolutePath,
+          '-ref', new File(mcpDir, 'bin/minecraft').absolutePath,
           '-in', shadow.shadowJar,
           '-out', new File(shadow.destinationDir, "${archivesBaseName}-${version}.${shadow.extension}").absolutePath]
 }
