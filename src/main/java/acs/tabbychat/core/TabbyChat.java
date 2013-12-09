@@ -1,7 +1,7 @@
 package acs.tabbychat.core;
 
 /****************************************************
- * This document is Copyright ©(2012) and is the intellectual property of the author.
+ * This document is Copyright &copy;(2012) and is the intellectual property of the author.
  * It may be not be reproduced under any circumstances except for personal, private
  * use as long as it remains in its unaltered, unedited form. It may not be placed on
  * any web site or otherwise distributed publicly without advance written permission.
